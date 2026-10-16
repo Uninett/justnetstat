@@ -1,12 +1,12 @@
 """Command line interface for justnetstat"""
 
 import argparse
-from typing import Optional, Sequence
+from collections.abc import Sequence
 
 from justnetstat.version import __version__
 
 
-def main(args: Optional[Sequence[str]] = None) -> int:
+def main(args: Sequence[str] | None = None) -> int:
     """Runs the justnetstat command line program.
 
     :param args: Command line arguments, defaulting to those of the current process
