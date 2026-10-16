@@ -1,0 +1,33 @@
+# The original Tcl snapshot, kept locally for reference only
+/tcl/
+
+# Virtualenvs and tool caches
+.venv/
+.direnv/
+.tox/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.mutmut-cache
+__pycache__/
+*.py[cod]
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+*.whl
+
+# Coverage and reports
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+reports/
+
+# Editors
+.idea/
+.vscode/
+
+# Debug output from net-snmp
+netsnmp-debug.log*
