@@ -31,3 +31,6 @@ reports/
 
 # Debug output from net-snmp
 netsnmp-debug.log*
+
+# Generated files
+src/justnetstat/version.py

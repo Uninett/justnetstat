@@ -1,0 +1,2 @@
+# Lets setuptools_scm find the version in archives made by git archive
+.git_archival.txt  export-subst
