@@ -6,6 +6,11 @@ symbolic names defined by the modern IF-MIB and IANAifType-MIB.
 """
 
 import re
+from collections.abc import Callable
+from ipaddress import IPv4Address, IPv4Network, IPv6Address
+from typing import TypeVar
+
+T = TypeVar("T")
 
 
 def if_descr(descr: str) -> str:
@@ -20,6 +25,26 @@ def if_descr(descr: str) -> str:
     descr = _substitute_first(descr, _DESCRIPTION_CLEANUPS)
     descr = descr.replace(" ", "-")
     return _substitute_first(descr, _DASHED_DESCRIPTION_ABBREVIATIONS)
+
+
+def interface_name(name: str | None, descr: str | None) -> str:
+    """Returns an interface's name for display, as a single word.
+
+    Prefers ifName, which is short and needs no abbreviation.  Falls back to
+    the abbreviated ifDescr.  Scripts split the output on whitespace, so any
+    whitespace in the name becomes dashes.
+    """
+    text = name if name else if_descr(descr or "")
+    return re.sub(r"\s+", "-", text)
+
+
+def or_none(value: T | None, formatter: Callable[[T], str] = str) -> str:
+    """Formats a value, showing a missing value as ``none`` like the Tcl implementation.
+
+    :param value: The value, or ``None`` if it is missing
+    :param formatter: The function that formats a value that is present
+    """
+    return "none" if value is None else formatter(value)
 
 
 def if_type(name: str) -> str:
@@ -42,6 +67,27 @@ def mtu(value: int | None) -> str:
     if value is None or value == _UNLIMITED_MTU:
         return "none"
     return str(value)
+
+
+def netmask(ip: IPv4Address | IPv6Address, prefix_length: int | None) -> str:
+    """Formats the netmask of an address.
+
+    IPv4 netmasks are dotted, as in the Tcl implementation.  IPv6 netmasks are
+    prefix lengths, e.g. ``/64``.  Their users may want that changed, so every
+    view formats netmasks here.
+    """
+    if prefix_length is None:
+        return "none"
+    if ip.version == 4:
+        return str(IPv4Network(f"0.0.0.0/{prefix_length}").netmask)
+    return f"/{prefix_length}"
+
+
+def phys_address(address: bytes | None) -> str:
+    """Formats a physical address (ifPhysAddress) as colon-separated lowercase hex."""
+    if not address:
+        return "(null)"
+    return ":".join(f"{byte:02x}" for byte in address)
 
 
 def speed(value: float, kilo: bool = False) -> str:

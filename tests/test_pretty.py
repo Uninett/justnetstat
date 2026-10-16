@@ -4,6 +4,8 @@ Unless noted otherwise, the expected values were captured by running the same
 inputs through the original Tcl implementation (``justPretty.tcl``).
 """
 
+from ipaddress import ip_address
+
 import pytest
 
 from justnetstat import pretty
@@ -246,3 +248,33 @@ class TestLongTime:
     ):
         # The Tcl implementation showed these as "0:60", "60:00", "24h0" and "7d0"
         assert pretty.long_time(seconds) == expected
+
+
+class TestNetmask:
+    @pytest.mark.parametrize(
+        "ip, prefix_length, expected",
+        [
+            ("192.0.2.1", 32, "255.255.255.255"),
+            ("198.51.100.1", 30, "255.255.255.252"),
+            ("203.0.113.1", 0, "0.0.0.0"),
+        ],
+    )
+    def test_when_address_is_ipv4_it_should_show_a_dotted_netmask(
+        self, ip, prefix_length, expected
+    ):
+        assert pretty.netmask(ip_address(ip), prefix_length) == expected
+
+    def test_when_address_is_ipv6_it_should_show_the_prefix_length(self):
+        assert pretty.netmask(ip_address("2001:db8::1"), 64) == "/64"
+
+    def test_when_prefix_length_is_unknown_it_should_return_none(self):
+        assert pretty.netmask(ip_address("192.0.2.1"), None) == "none"
+
+
+class TestPhysAddress:
+    def test_it_should_show_colon_separated_lowercase_hex(self):
+        assert pretty.phys_address(bytes.fromhex("02AB00000001")) == "02:ab:00:00:00:01"
+
+    @pytest.mark.parametrize("address", [b"", None])
+    def test_when_address_is_missing_it_should_return_null(self, address):
+        assert pretty.phys_address(address) == "(null)"
