@@ -1,4 +1,6 @@
 ---
+# Vendored MIB files are kept exactly as published
+exclude: '^src/justnetstat/mibs/'
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0

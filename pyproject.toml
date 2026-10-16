@@ -42,6 +42,9 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"justnetstat" = ["mibs/*"]
+
 [tool.setuptools_scm]
 version_file = "src/justnetstat/version.py"
 # For copies without git metadata, e.g. made by rsync
