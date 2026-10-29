@@ -26,6 +26,10 @@ dependencies = [
 ]
 dynamic = ["version"]
 
+[project.urls]
+GitHub = "https://github.com/Uninett/justnetstat"
+Issues = "https://github.com/Uninett/justnetstat/issues"
+
 [project.scripts]
 justnetstat = "justnetstat.cli:main"
 
