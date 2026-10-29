@@ -3,10 +3,13 @@
 import argparse
 import asyncio
 import logging
+import os
 import sys
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 
 from netsnmpy.errors import SNMPError
+from netsnmpy.session import SNMPSession
 
 from justnetstat import interface_list
 from justnetstat.interfaces import RetrievalError, fetch_interfaces
@@ -24,12 +27,23 @@ def main(args: Sequence[str] | None = None) -> int:
     mode = select_mode(options)
     if mode is None:
         return 0
-    if mode != "-i":
+    show = _MODES.get(mode)
+    if show is None:
         print(f"justnetstat: {mode} is not implemented yet", file=sys.stderr)
         return 1
     _set_up_output()
     init_mibs()
-    return asyncio.run(show_interface_list(options))
+    try:
+        asyncio.run(show(options))
+    except (SessionError, RetrievalError) as error:
+        print(error, file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        return 130
+    except BrokenPipeError:
+        _discard_output()
+        return 141  # As if killed by SIGPIPE, like other tools in a pipeline
+    return 0
 
 
 def select_mode(options: argparse.Namespace) -> str | None:
@@ -51,29 +65,13 @@ def select_mode(options: argparse.Namespace) -> str | None:
     return next((flag for flag, is_set in modes if is_set), None)
 
 
-async def show_interface_list(options: argparse.Namespace) -> int:
-    """Prints the interface list of ``-i`` and its variants.
-
-    :return: The process exit code
-    """
+async def show_interface_list(options: argparse.Namespace) -> None:
+    """Prints the interface list of ``-i`` and its variants."""
     variant = _interface_list_variant(options)
-    try:
-        session = await open_session(
-            options.agent, options.community, options.port, options.timeout
-        )
-    except (OSError, SNMPError) as error:
-        return _die(
-            f"Could not create SNMPv2C session handle for agent {options.agent}; "
-            f"reason {error}"
-        )
-    try:
+    async with _session(options) as session:
         interfaces = await fetch_interfaces(
             session, with_addresses=variant is not interface_list.Variant.DESCRIPTIONS
         )
-    except RetrievalError as error:
-        return _die(str(error))
-    finally:
-        session.close()
     lines = interface_list.render(
         interfaces,
         variant,
@@ -83,7 +81,31 @@ async def show_interface_list(options: argparse.Namespace) -> int:
     )
     for line in lines:
         print(line)
-    return 0
+
+
+class SessionError(Exception):
+    """Raised when no SNMP session can be opened with an agent"""
+
+
+@asynccontextmanager
+async def _session(options: argparse.Namespace) -> AsyncIterator[SNMPSession]:
+    """Opens a session with the agent named on the command line, closing it afterwards.
+
+    :raises SessionError: If the session cannot be opened
+    """
+    try:
+        session: SNMPSession = await open_session(
+            options.agent, options.community, options.port, options.timeout
+        )
+    except (OSError, SNMPError) as error:
+        raise SessionError(
+            f"Could not create SNMPv2C session handle for agent {options.agent}; "
+            f"reason {error}"
+        ) from error
+    try:
+        yield session
+    finally:
+        session.close()
 
 
 def _set_up_output() -> None:
@@ -103,6 +125,15 @@ def _set_up_output() -> None:
         sys.stdout.reconfigure(encoding="utf-8", errors="surrogateescape")
 
 
+def _discard_output() -> None:
+    """Sends further output to /dev/null, after the reader of stdout went away.
+
+    Python flushes stdout on exit, which would fail again and print a traceback.
+    """
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull, sys.stdout.fileno())
+
+
 def _interface_list_variant(options: argparse.Namespace) -> interface_list.Variant:
     """Selects the interface list variant, in the Tcl implementation's precedence."""
     if options.descriptions:
@@ -114,9 +145,9 @@ def _interface_list_variant(options: argparse.Namespace) -> interface_list.Varia
     return interface_list.Variant.BASIC
 
 
-def _die(message: str) -> int:
-    print(message, file=sys.stderr)
-    return 1
+_MODES = {
+    "-i": show_interface_list,
+}
 
 
 def make_parser() -> argparse.ArgumentParser:

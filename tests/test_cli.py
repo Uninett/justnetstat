@@ -79,6 +79,39 @@ class TestMain:
 
         assert result.stdout == "\u2192 ".encode() + b"\xe6\n"
 
+    def test_when_the_reader_of_its_output_goes_away_it_should_exit_quietly(self):
+        # As in `justnetstat -B -w 1 router | head`.
+        # The output is too much for the pipe, so the program is still writing.
+        program = (
+            "from justnetstat import cli\n"
+            "async def endless(options):\n"
+            "    while True:\n"
+            "        print('x' * 79)\n"
+            "cli._MODES['-i'] = endless\n"
+            "raise SystemExit(cli.main(['-i', '192.0.2.1']))\n"
+        )
+        process = subprocess.Popen(
+            [sys.executable, "-c", program],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        process.stdout.read(1)
+        process.stdout.close()
+
+        assert process.wait(timeout=60) == 141
+        assert process.stderr.read() == b""
+        process.stderr.close()
+
+    def test_when_interrupted_it_should_exit_quietly(self, monkeypatch, capsys):
+        async def interrupted(options):
+            raise KeyboardInterrupt()
+
+        monkeypatch.setitem(cli._MODES, "-i", interrupted)
+
+        assert cli.main(["-i", "192.0.2.1"]) == 130
+        assert capsys.readouterr() == ("", "")
+
 
 class TestInterfaceList:
     def test_when_run_like_update_dbs_it_should_print_only_headerless_lines(
