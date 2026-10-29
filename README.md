@@ -144,7 +144,6 @@ Modes still to port from the original:
 
 Other open items:
 
-- [ ] Choose a license.
 - [ ] Set up CI.
 - [ ] Deploy the port to the production server, where `/local/bin/snmpnetstat`
   is a symlink to `justnetstat`.
@@ -178,3 +177,9 @@ or docstring says why.
 Test data must never contain real router names or IP addresses. Use
 documentation addresses (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24 and
 2001:db8::/32) and names like `gw1.example.net`.
+
+## License
+
+justnetstat is licensed under the Apache License 2.0. See `LICENSE` and
+`NOTICE`. The original Tcl implementation was released by UNINETT under a
+BSD-style license.

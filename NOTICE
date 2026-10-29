@@ -1,0 +1,9 @@
+justnetstat
+Copyright 2026 Sikt - Norwegian Agency for Shared Services in Education and Research
+
+This product includes software developed at
+Sikt (https://www.sikt.no/).
+
+It is a port of the original justnetstat, written in Tcl by Jarle Greipsland
+at UNINETT, which is now part of Sikt.  The original was copyright 1997-2021
+UNINETT, and released under a BSD-style license.
