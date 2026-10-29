@@ -9,8 +9,10 @@ from netsnmpy.oids import OID
 
 from justnetstat.interfaces import (
     Address,
+    Counters,
     RetrievalError,
     fetch_addresses,
+    fetch_counters,
     fetch_interfaces,
 )
 
@@ -246,6 +248,40 @@ class TestFetchAddresses:
         assert asyncio.run(fetch_addresses(session=None)) == {
             7: [Address(ip_address("192.0.2.1"), None)]
         }
+
+
+class TestFetchCounters:
+    def test_when_interface_has_both_kinds_of_counters_it_should_prefer_64_bit_ones(
+        self, query_agent
+    ):
+        # Asking for interface 600 too makes the 32-bit counters get fetched as well
+        counters = query_agent(
+            "interfaces", lambda session: fetch_counters(session, [501, 600])
+        )
+
+        assert counters[501] == Counters(
+            501_000_000_000, 501_023, 1_002_000_000_000, 1_002_011, bits=64
+        )
+
+    def test_when_interface_lacks_64_bit_counters_it_should_use_32_bit_ones(
+        self, query_agent
+    ):
+        counters = query_agent(
+            "interfaces", lambda session: fetch_counters(session, [600])
+        )
+
+        assert counters[600] == Counters(
+            4_000_000_000, 5007, 3_000_000_000, 4006, bits=32
+        )
+
+    def test_when_agent_has_no_counters_for_an_interface_it_should_leave_it_out(
+        self, query_agent
+    ):
+        counters = query_agent(
+            "interfaces", lambda session: fetch_counters(session, [501, 999])
+        )
+
+        assert list(counters) == [501]
 
 
 def by_index(interfaces):

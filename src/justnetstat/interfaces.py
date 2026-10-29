@@ -1,6 +1,6 @@
 """Fetching of interface data from network equipment"""
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from ipaddress import IPv4Address, IPv4Network, IPv6Address, ip_address
 
@@ -64,6 +64,21 @@ class Interface:
         )
 
 
+@dataclass(frozen=True)
+class Counters:
+    """An interface's traffic counters.
+
+    Packet counts include unicast, multicast and broadcast packets.
+    ``bits`` is the counter width, which determines where the counters wrap around.
+    """
+
+    in_octets: int = 0
+    in_packets: int = 0
+    out_octets: int = 0
+    out_packets: int = 0
+    bits: int = 64
+
+
 class RetrievalError(Exception):
     """Raised when a table cannot be retrieved from an agent"""
 
@@ -117,6 +132,36 @@ async def fetch_addresses(session: SNMPSession) -> dict[int, list[Address]]:
     ):
         addresses.setdefault(if_index, []).append(address)
     return addresses
+
+
+async def fetch_counters(
+    session: SNMPSession, if_indexes: Iterable[int]
+) -> dict[int, Counters]:
+    """Fetches the traffic counters of interfaces.
+
+    Prefers the 64-bit counters of ifXTable.  Falls back to the 32-bit
+    counters of ifTable for interfaces that lack them.  Interfaces without any
+    counters are left out, so views can tell them from idle interfaces.
+
+    :param session: An open session
+    :param if_indexes: The ifIndexes of the interfaces to fetch counters for
+    :return: Counters by ifIndex
+    :raises RetrievalError: If the agent stops answering, or the request fails
+    """
+    if_indexes = list(if_indexes)
+    hc_table = await _walk("ifXTable", session, *_HC_COUNTER_COLUMNS)
+    counters = {
+        index[0]: _hc_counters(row)
+        for index, row in hc_table.items()
+        if _HC_IN_OCTETS in row
+    }
+    if any(if_index not in counters for if_index in if_indexes):
+        table = await _walk("ifTable", session, *_COUNTER_COLUMNS)
+        for index, row in table.items():
+            counters.setdefault(index[0], _counters(row))
+    return {
+        if_index: counters[if_index] for if_index in if_indexes if if_index in counters
+    }
 
 
 async def _walk(table_name: str, session: SNMPSession, *columns: str) -> Table:
@@ -247,6 +292,40 @@ def _address_order(address: Address) -> tuple[int, int]:
     return address.ip.version, int(address.ip)
 
 
+def _hc_counters(row: Row) -> Counters:
+    return Counters(
+        in_octets=row.get(_HC_IN_OCTETS, 0),
+        in_packets=_sum(
+            row,
+            "IF-MIB::ifHCInUcastPkts",
+            "IF-MIB::ifHCInMulticastPkts",
+            "IF-MIB::ifHCInBroadcastPkts",
+        ),
+        out_octets=row.get("IF-MIB::ifHCOutOctets", 0),
+        out_packets=_sum(
+            row,
+            "IF-MIB::ifHCOutUcastPkts",
+            "IF-MIB::ifHCOutMulticastPkts",
+            "IF-MIB::ifHCOutBroadcastPkts",
+        ),
+        bits=64,
+    )
+
+
+def _counters(row: Row) -> Counters:
+    return Counters(
+        in_octets=row.get("IF-MIB::ifInOctets", 0),
+        in_packets=_sum(row, "IF-MIB::ifInUcastPkts", "IF-MIB::ifInNUcastPkts"),
+        out_octets=row.get("IF-MIB::ifOutOctets", 0),
+        out_packets=_sum(row, "IF-MIB::ifOutUcastPkts", "IF-MIB::ifOutNUcastPkts"),
+        bits=32,
+    )
+
+
+def _sum(row: Row, *columns: str) -> int:
+    return sum(row.get(column, 0) for column in columns)
+
+
 _INTERFACE_COLUMNS = (
     "IF-MIB::ifDescr",
     "IF-MIB::ifType",
@@ -258,6 +337,28 @@ _INTERFACE_COLUMNS = (
     "IF-MIB::ifName",
     "IF-MIB::ifHighSpeed",
     "IF-MIB::ifAlias",
+)
+
+_HC_IN_OCTETS = "IF-MIB::ifHCInOctets"
+
+_HC_COUNTER_COLUMNS = (
+    _HC_IN_OCTETS,
+    "IF-MIB::ifHCInUcastPkts",
+    "IF-MIB::ifHCInMulticastPkts",
+    "IF-MIB::ifHCInBroadcastPkts",
+    "IF-MIB::ifHCOutOctets",
+    "IF-MIB::ifHCOutUcastPkts",
+    "IF-MIB::ifHCOutMulticastPkts",
+    "IF-MIB::ifHCOutBroadcastPkts",
+)
+
+_COUNTER_COLUMNS = (
+    "IF-MIB::ifInOctets",
+    "IF-MIB::ifInUcastPkts",
+    "IF-MIB::ifInNUcastPkts",
+    "IF-MIB::ifOutOctets",
+    "IF-MIB::ifOutUcastPkts",
+    "IF-MIB::ifOutNUcastPkts",
 )
 
 _IP_ADDRESS_COLUMNS = (
