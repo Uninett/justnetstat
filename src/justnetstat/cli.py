@@ -255,14 +255,18 @@ def make_parser() -> argparse.ArgumentParser:
         help="timeout in seconds",
     )
     parser.add_argument(
-        "-c", dest="count", type=_positive_integer, default=-1, help="count"
+        "-c",
+        dest="count",
+        type=_positive_integer,
+        default=-1,
+        help="number of rounds of rates for -B (1: show the counters once)",
     )
     parser.add_argument(
         "-w",
         dest="interval",
         type=_positive_integer,
         default=-1,
-        help="interval in seconds",
+        help="seconds between rounds of rates for -B (default 15 with -c)",
     )
     parser.add_argument(
         "-P",
@@ -276,7 +280,11 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "agent", help="the SNMP agent, i.e. the router's name or address"
     )
-    parser.add_argument("args", nargs="*", help="optional arguments")
+    parser.add_argument(
+        "args",
+        nargs="*",
+        help="optional arguments, e.g. a route prefix for -r" + _NOT_IMPLEMENTED,
+    )
     return parser
 
 
@@ -291,20 +299,27 @@ def _positive_integer(text: str) -> int:
     return value
 
 
+_NOT_IMPLEMENTED = " (not implemented yet)"
+
 _FLAGS = [
     ("-i", "interfaces", "do the interface table"),
-    ("-r", "routes", "print routing table entries"),
-    ("-B", "traffic", "print interface traffic counters"),
-    ("-C", "errors", "print interface error counters"),
-    ("-a", "all", "print active sessions or all interfaces"),
-    ("-b", "bgp", "print BGP summary information"),
-    ("-4", "bgp4_table", "print the BGP4 routing table"),
-    ("-p", "bgp_peers", "print BGP peer information"),
-    ("-T", "bgp_timers", "print BGP timing parameters"),
+    ("-r", "routes", "print routing table entries" + _NOT_IMPLEMENTED),
+    ("-B", "traffic", "print interface traffic counters, or rates with -w or -c"),
+    ("-C", "errors", "print interface error counters" + _NOT_IMPLEMENTED),
+    (
+        "-a",
+        "all",
+        "print all addresses with -i; on its own, print active sessions"
+        + _NOT_IMPLEMENTED,
+    ),
+    ("-b", "bgp", "print BGP summary information" + _NOT_IMPLEMENTED),
+    ("-4", "bgp4_table", "print the BGP4 routing table" + _NOT_IMPLEMENTED),
+    ("-p", "bgp_peers", "print BGP peer information" + _NOT_IMPLEMENTED),
+    ("-T", "bgp_timers", "print BGP timing parameters" + _NOT_IMPLEMENTED),
     ("-d", "descriptions", "print ifAlias fields"),
     ("-D", "descriptions_and_addresses", "print ifAlias fields and IP addresses"),
     ("-m", "media", "print media addresses"),
-    ("-n", "numeric", "don't translate IP addresses to DNS names"),
+    ("-n", "numeric", "don't translate IP addresses to DNS names" + _NOT_IMPLEMENTED),
     ("-h", "no_header", "don't print headers"),
-    ("-k", "kilo", "print units in k"),
+    ("-k", "kilo", "show speeds and rates in whole thousands"),
 ]

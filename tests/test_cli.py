@@ -356,6 +356,26 @@ class TestParser:
         assert (options.community, options.port, options.timeout) == ("public", 161, 5)
 
 
+class TestHelp:
+    @pytest.mark.parametrize(
+        "option", ["-r", "-C", "-b", "-4", "-p", "-T", "-n", "args"]
+    )
+    def test_it_should_mark_unimplemented_options(self, option):
+        assert "(not implemented yet)" in help_text(option)
+
+    @pytest.mark.parametrize(
+        "option",
+        ["-i", "-B", "-d", "-D", "-m", "-h", "-k", "-y", "-t", "-c", "-w", "-P"],
+    )
+    def test_it_should_not_mark_implemented_options(self, option):
+        assert "not implemented" not in help_text(option)
+
+    def test_when_an_option_is_partly_implemented_it_should_say_which_part_is_missing(
+        self,
+    ):
+        assert help_text("-a").endswith("print active sessions (not implemented yet)")
+
+
 def agent_args(agent, community: str = "interfaces") -> list[str]:
     """Returns command line arguments that point justnetstat at a simulated agent."""
     return ["-y", community, "-P", str(agent.port), agent.host]
@@ -405,3 +425,13 @@ class FakeClock:
 
     async def sleep(self, seconds: float):
         self.now += seconds + (self.delays.pop(0) if self.delays else 0)
+
+
+def help_text(option: str) -> str:
+    """Returns the help text of a command line option or argument."""
+    actions = cli.make_parser()._actions
+    return next(
+        action.help
+        for action in actions
+        if option in action.option_strings or action.dest == option
+    )
