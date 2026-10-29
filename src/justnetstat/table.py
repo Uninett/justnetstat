@@ -1,7 +1,7 @@
 """Rendering of aligned text tables"""
 
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 
@@ -25,6 +25,18 @@ def render_table(
     lines.extend(_check_row_length(columns, row) for row in rows)
     widths = _column_widths(columns, lines)
     return [_format_line(columns, widths, line) for line in lines]
+
+
+def fit_columns(
+    columns: Sequence["Column"], rows: Sequence[Sequence[str]]
+) -> list["Column"]:
+    """Returns the columns with their minimum widths raised to fit the given rows.
+
+    Tables printed repeatedly can pass the result on to the next round, so
+    their columns never shrink and jump around between rounds.
+    """
+    widths = _column_widths(columns, [_check_row_length(columns, row) for row in rows])
+    return [replace(column, width=width) for column, width in zip(columns, widths)]
 
 
 def _check_row_length(columns: Sequence["Column"], row: Sequence[str]) -> Sequence[str]:

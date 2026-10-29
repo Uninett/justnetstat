@@ -6,7 +6,7 @@ Expected output lines are kept whole, so they read like real output.  Their
 
 import pytest
 
-from justnetstat.table import Column, render_table
+from justnetstat.table import Column, fit_columns, render_table
 
 
 class TestRenderTable:
@@ -89,6 +89,18 @@ class TestRenderTable:
 
         with pytest.raises(ValueError):
             render_table(columns, [row])
+
+
+class TestFitColumns:
+    def test_it_should_widen_columns_to_fit_the_rows(self):
+        columns = fit_columns(
+            [Column("Name", 4), Column("Rate", 5, ">")], [["et-0/0/10.1000", "1.5M"]]
+        )
+
+        assert columns == [Column("Name", 14), Column("Rate", 5, ">")]
+
+    def test_it_should_never_narrow_columns(self):
+        assert fit_columns([Column("Name", 10)], [["lo0"]]) == [Column("Name", 10)]
 
 
 INTERFACE_LIST_COLUMNS = [
