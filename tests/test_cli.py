@@ -7,10 +7,13 @@ Expected output lines are kept whole, so they read like real output.  Their
 import os
 import subprocess
 import sys
+from collections.abc import Sequence
+from contextlib import asynccontextmanager
 
 import pytest
 
 from justnetstat import cli
+from justnetstat.interfaces import Counters, Interface
 from justnetstat.version import __version__
 
 
@@ -220,6 +223,86 @@ class TestInterfaceList:
         )
 
 
+class TestTraffic:
+    def test_without_interval_or_count_it_should_print_counter_totals(
+        self, snmp_agent, capsys
+    ):
+        assert cli.main(["-Bh", *agent_args(snmp_agent)]) == 0
+
+        out, err = capsys.readouterr()
+        lines = out.splitlines()
+        assert err == ""
+        assert (
+            lines[4]
+            == "501 xe-0/0/0.0   198.51.100.1      501000000000     501023 1002000000000    1002011"  # noqa: E501
+        )
+        assert (
+            lines[7]
+            == "600 GE0/1        none                4000000000       5007    3000000000       4006"  # noqa: E501
+        )
+
+    def test_with_interval_and_count_it_should_print_that_many_rounds_of_rates(
+        self, snmp_agent, capsys, monkeypatch
+    ):
+        cli.main(["-ih", *agent_args(snmp_agent)])
+        interface_count = len(capsys.readouterr().out.splitlines())
+        monkeypatch.setattr(cli, "_sleep", FakeClock().sleep)
+
+        assert cli.main(["-B", "-w", "1", "-c", "2", *agent_args(snmp_agent)]) == 0
+
+        lines = capsys.readouterr().out.splitlines()
+        assert len(lines) == 2 * (1 + interface_count)
+        assert [line for line in lines if line.startswith("Ix ")] == [
+            lines[0],
+            lines[1 + interface_count],
+        ]
+        assert "ibit/s" in lines[0]
+
+    def test_when_a_round_is_delayed_it_should_divide_by_the_measured_time(
+        self, monkeypatch, capsys
+    ):
+        # The Tcl implementation divided by the interval.
+        # It showed 12k for the delayed round, which counted 15 s of traffic.
+        clock = FakeClock(delays=[0, 5])
+        fake_steady_agent(monkeypatch, clock, octets_per_second=1000)
+
+        assert cli.main(["-Bh", "-w", "10", "-c", "2", "192.0.2.1"]) == 0
+
+        in_rates = [line.split()[3] for line in capsys.readouterr().out.splitlines()]
+        assert in_rates == ["8k", "8k"]
+
+    def test_when_an_answer_is_delayed_it_should_time_the_sample_by_the_answer(
+        self, monkeypatch, capsys
+    ):
+        # As when a request is lost, and the agent answers its retry
+        clock = FakeClock()
+        fake_steady_agent(
+            monkeypatch, clock, octets_per_second=1000, answer_delays=[0, 5]
+        )
+
+        assert cli.main(["-Bh", "-w", "10", "-c", "3", "192.0.2.1"]) == 0
+
+        in_rates = [line.split()[3] for line in capsys.readouterr().out.splitlines()]
+        assert in_rates == ["8k", "8k", "8k"]
+
+
+class TestTrafficSchedule:
+    @pytest.mark.parametrize(
+        "interval, count, expected",
+        [
+            (-1, -1, (15, 1)),
+            (5, -1, (5, None)),
+            (-1, 3, (15, 3)),
+            (5, 3, (5, 3)),
+            (5, 1, (5, 1)),
+        ],
+    )
+    def test_it_should_interpret_interval_and_count_like_the_tcl(
+        self, interval, count, expected
+    ):
+        assert cli.traffic_schedule(interval, count) == expected
+
+
 class TestSelectMode:
     @pytest.mark.parametrize(
         "flags, expected",
@@ -280,3 +363,45 @@ def agent_args(agent, community: str = "interfaces") -> list[str]:
 
 def parse(flags: str):
     return cli.make_parser().parse_args([flags, "gw1.example.net"])
+
+
+def fake_steady_agent(
+    monkeypatch, clock, octets_per_second: int, answer_delays: Sequence[float] = ()
+):
+    """Replaces the agent with one that has a single interface with steady traffic.
+
+    The interface's input octets grow at a fixed rate, by the time on
+    ``clock``.  Each answer can be delayed by a number of seconds, in turn.
+    """
+    delays = list(answer_delays)
+
+    @asynccontextmanager
+    async def session(options):
+        yield None
+
+    async def fetch_interfaces(session):
+        return [Interface(index=1, name="ge-0/0/0")]
+
+    async def fetch_counters(session, if_indexes):
+        clock.now += delays.pop(0) if delays else 0
+        return {1: Counters(in_octets=round(octets_per_second * clock.now))}
+
+    monkeypatch.setattr(cli, "_clock", clock)
+    monkeypatch.setattr(cli, "_sleep", clock.sleep)
+    monkeypatch.setattr(cli, "_session", session)
+    monkeypatch.setattr(cli, "fetch_interfaces", fetch_interfaces)
+    monkeypatch.setattr(cli, "fetch_counters", fetch_counters)
+
+
+class FakeClock:
+    """A clock that only moves when slept on, optionally sleeping longer than asked"""
+
+    def __init__(self, delays: list[float] = ()):
+        self.now = 0.0
+        self.delays = list(delays)
+
+    def __call__(self) -> float:
+        return self.now
+
+    async def sleep(self, seconds: float):
+        self.now += seconds + (self.delays.pop(0) if self.delays else 0)

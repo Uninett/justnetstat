@@ -5,14 +5,21 @@ import asyncio
 import logging
 import os
 import sys
+import time
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from itertools import count
 
 from netsnmpy.errors import SNMPError
 from netsnmpy.session import SNMPSession
 
-from justnetstat import interface_list
-from justnetstat.interfaces import RetrievalError, fetch_interfaces
+from justnetstat import interface_list, traffic
+from justnetstat.interfaces import (
+    Counters,
+    RetrievalError,
+    fetch_counters,
+    fetch_interfaces,
+)
 from justnetstat.snmp import init_mibs, open_session
 from justnetstat.version import __version__
 
@@ -83,6 +90,72 @@ async def show_interface_list(options: argparse.Namespace) -> None:
         print(line)
 
 
+async def show_traffic(options: argparse.Namespace) -> None:
+    """Prints the traffic counters of ``-B``, or rates when given an interval or count.
+
+    Rates are printed in rounds, one per interval, after a first sample of
+    the counters.  Each round has its own header.  Rates are divided by the
+    measured time between samples, where the Tcl implementation divided by
+    the interval.  That keeps them right when a fetch is delayed, e.g. by a
+    lost packet.
+    """
+    interval, rounds = traffic_schedule(options.interval, options.count)
+    async with _session(options) as session:
+        interfaces = await fetch_interfaces(session)
+        if_indexes = [interface.index for interface in interfaces]
+        previous, previous_time = await _sample_counters(session, if_indexes)
+        if rounds == 1:
+            for line in traffic.render_totals(
+                interfaces, previous, header=not options.no_header
+            ):
+                print(line)
+            return
+        table = traffic.RateTable(header=not options.no_header, kilo=options.kilo)
+        next_sample = previous_time
+        for _ in count() if rounds is None else range(rounds):
+            # Samples start one interval apart.
+            # After a delay, the schedule restarts instead of rushing to catch up.
+            next_sample = max(next_sample + interval, _clock())
+            await _sleep(next_sample - _clock())
+            current, current_time = await _sample_counters(session, if_indexes)
+            for line in table.render(
+                interfaces, previous, current, current_time - previous_time
+            ):
+                print(line, flush=True)
+            previous_time, previous = current_time, current
+
+
+def traffic_schedule(interval: int, rounds: int) -> tuple[int, int | None]:
+    """Interprets the -w and -c options of -B like the Tcl implementation does.
+
+    Without either option, a single snapshot of the counters is shown.  An
+    interval alone means rounds of rates until interrupted.  A count alone
+    means that many rounds, 15 seconds apart.  A count of 1 always means a
+    snapshot.  The parser rejects values below 1, so -1 can only mean "not given".
+
+    :param interval: The -w option, or -1 if not given
+    :param rounds: The -c option, or -1 if not given
+    :return: The interval in seconds, and the number of rounds, ``None`` meaning
+        until interrupted
+    """
+    if interval == -1:
+        return 15, 1 if rounds == -1 else rounds
+    return interval, None if rounds == -1 else rounds
+
+
+async def _sample_counters(
+    session: SNMPSession, if_indexes: list[int]
+) -> tuple[dict[int, Counters], float]:
+    """Fetches traffic counters, and the time they were read.
+
+    The time is taken when the answer arrives.  When a request is lost, the
+    agent reads its counters on a retry, a timeout or more after the first
+    request was sent.
+    """
+    counters = await fetch_counters(session, if_indexes)
+    return counters, _clock()
+
+
 class SessionError(Exception):
     """Raised when no SNMP session can be opened with an agent"""
 
@@ -145,8 +218,13 @@ def _interface_list_variant(options: argparse.Namespace) -> interface_list.Varia
     return interface_list.Variant.BASIC
 
 
+# Tests replace these to control time
+_sleep = asyncio.sleep
+_clock = time.monotonic
+
 _MODES = {
     "-i": show_interface_list,
+    "-B": show_traffic,
 }
 
 
