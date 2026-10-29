@@ -39,8 +39,13 @@ headers", help is only available as `--help`.
 ## Scripts that parse the output
 
 Zino 1's traffic statistics run `justnetstat -inh` and `justnetstat -idnh`
-daily, and parse their output. Their parsing is a compatibility contract, which
-the tests check:
+daily, and parse their output. The scripts are `traffic/db/update-dbs.pl` and
+`traffic/db/warn-dups.pl` in Zino 1's source. They run e.g.
+`/local/bin/snmpnetstat -inh -t 30 -y <community> -P <port> <agent> 2>&1`.
+`snmpnetstat` was the name of the original's predecessor. On the production
+server it is a symlink to `justnetstat`.
+
+Their parsing is a compatibility contract, which the tests check:
 
 - `-inh`: each line is split on whitespace. Field 0 is the ifIndex, field 2 the
   admin status, and field 4 the address. Interfaces whose admin status is `off`
@@ -145,6 +150,10 @@ Modes still to port from the original:
 Other open items:
 
 - [ ] Set up CI.
+- [ ] Before deploying, compare fields 0, 2 and 4 of the `-inh` output with the
+  original's, for every router the traffic statistics poll. Field 4 now comes
+  from `ipAddressTable`. If a router lists a different lowest address there, its
+  traffic data would silently move to a new file.
 - [ ] Deploy the port to the production server, where `/local/bin/snmpnetstat`
   is a symlink to `justnetstat`.
 - [ ] netsnmp-cffi ignores the error status of SNMP responses. `justnetstat`
@@ -168,6 +177,46 @@ The tests simulate SNMP agents with
 `tests/snmp_fixtures/`. snmpsim runs through `uvx`, which comes with uv, in its
 own Python 3.11 environment, since it does not work on newer Python versions.
 
+### Code layout
+
+- `src/justnetstat/cli.py` parses the original's flags and runs the selected
+  mode.
+- `snmp.py` loads the shipped MIBs, opens sessions and walks table columns.
+- `interfaces.py` fetches interfaces, their addresses and their traffic
+  counters.
+- `interface_list.py` renders the `-i` views, and `traffic.py` the `-B` views.
+- `pretty.py` formats values the way the original did. `table.py` renders
+  aligned tables.
+- `mibs/` holds the MIB files the views read, copied from Zino 2. Add files
+  there as new views need them.
+- `tests/snmp_fixtures/*.snmprec` hold the data of the simulated agents. The
+  SNMP community picks the file, e.g. `interfaces` for `interfaces.snmprec`.
+
+### SNMP
+
+SNMP goes through [netsnmp-cffi](https://github.com/Uninett/netsnmp-cffi),
+imported as `netsnmpy`. Use its async request methods, inside the single event
+loop that `cli.main` starts. Its blocking methods start a new event loop for
+every request.
+
+[Zino 2](https://github.com/Uninett/zino) is a useful reference, but not a
+dependency. Its BGP tasks show how to read the vendor BGP MIBs of Juniper and
+Cisco, which `-b` will need. Do not copy its `sparsewalk` without testing it: it
+appears to pair values with the wrong columns once one column ends before the
+others.
+
+### Comparing with the original
+
+The Tcl implementation is not part of this repository. It still runs on the
+production server, so both can be run against the same router and their output
+compared. Routers only answer SNMP from the management subnet. Counter and BGP
+message values change between runs, so compare their format, not their numbers.
+
+When the port fixes a wart in the original's output, the test that covers the
+fix says so in a comment, showing what the original printed.
+
+### Conventions
+
 Lines are at most 88 characters long, which ruff enforces. Long, descriptive
 test names are welcome: when one makes its `def` line too long, that line gets a
 `# noqa: E501` tag. Other lines may only be longer for a good reason, such as an
@@ -177,6 +226,12 @@ or docstring says why.
 Test data must never contain real router names or IP addresses. Use
 documentation addresses (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24 and
 2001:db8::/32) and names like `gw1.example.net`.
+
+Markdown files are wrapped at 80 columns, as Emacs's `M-q` fills them.
+
+The version comes from git tags, through setuptools_scm, which writes
+`src/justnetstat/version.py` when the package is installed. After tagging,
+`uv sync --reinstall-package justnetstat` updates it.
 
 ## License
 
