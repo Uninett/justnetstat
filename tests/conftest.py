@@ -1,6 +1,7 @@
 """Shared test fixtures"""
 
 import asyncio
+import importlib.metadata
 import os
 import signal
 import socket
@@ -29,7 +30,8 @@ def snmp_agent():
     The SNMP community selects the file: community ``walk`` serves ``walk.snmprec``.
 
     snmpsim fails to start on Python 3.14 and is slow on 3.13, so it runs in
-    its own Python 3.11 environment through uvx.
+    its own Python 3.11 environment through uvx, at the version installed by the
+    ``test`` dependency group.
     """
     if not which("uvx"):
         pytest.fail("uvx is needed to run snmpsim")
@@ -37,7 +39,7 @@ def snmp_agent():
     command = [
         "uvx",
         "--python=3.11",
-        "--from=snmpsim>=1.0,!=1.1.6,<1.2",
+        f"--from=snmpsim=={importlib.metadata.version('snmpsim')}",
         "snmpsim-command-responder",
         f"--data-dir={SNMP_FIXTURE_DIRECTORY}",
         "--log-level=error",
@@ -56,24 +58,21 @@ def snmp_agent():
 
 @pytest.fixture
 def query_agent(snmp_agent):
-    """Returns a function running an async operation on a simulated agent's session.
+    """Returns an async function running an operation on a simulated agent's session.
 
     The function takes the community selecting the agent, the operation (an
     async function taking the session) and optionally the SNMP version.  It
     returns the operation's result, and closes the session afterwards.
     """
 
-    def query(community: str, operation, version: str = "2c"):
-        async def run():
-            session = create_session(
-                snmp_agent.host, community, snmp_agent.port, timeout=1, version=version
-            )
-            try:
-                return await operation(session)
-            finally:
-                session.close()
-
-        return asyncio.run(run())
+    async def query(community: str, operation, version: str = "2c"):
+        session = create_session(
+            snmp_agent.host, community, snmp_agent.port, timeout=1, version=version
+        )
+        try:
+            return await operation(session)
+        finally:
+            session.close()
 
     return query
 

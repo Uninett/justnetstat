@@ -37,8 +37,10 @@ justnetstat = "justnetstat.cli:main"
 test = [
     "coverage",
     "pytest>=8",
+    "pytest-asyncio>=1.0",
     "pytest-cov",
     "pytest-timeout",
+    "snmpsim>=1.0,!=1.1.6,<1.2",
     "tox>=4.22",
 ]
 dev = [
@@ -71,6 +73,8 @@ known-first-party = ["justnetstat"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 timeout = 300
 
 [tool.coverage.run]
