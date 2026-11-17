@@ -149,7 +149,6 @@ Modes still to port from the original:
 
 Other open items:
 
-- [ ] Set up CI.
 - [ ] Before deploying, compare fields 0, 2 and 4 of the `-inh` output with the
   original's, for every router the traffic statistics poll. Field 4 now comes
   from `ipAddressTable`. If a router lists a different lowest address there, its
@@ -169,6 +168,7 @@ The project is managed with [uv](https://docs.astral.sh/uv/):
 uv sync                    # create a virtualenv with all development tools
 uv run pre-commit install  # run ruff on every commit
 uv run pytest              # run the test suite
+uv run tox run-parallel    # run it on every supported Python version, like CI
 uv run justnetstat --help
 ```
 

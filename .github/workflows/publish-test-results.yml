@@ -1,0 +1,40 @@
+name: Publish test results
+
+on:
+  workflow_run:
+    workflows: ["Run test suite"]
+    types:
+      - completed
+
+permissions:
+  actions: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  publish-test-results:
+    name: "Publish test results"
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion != 'skipped' && github.repository_owner == 'Uninett'
+
+    steps:
+      - name: Download and Extract Artifacts
+        env:
+          GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
+          ARTIFACTS_URL: ${{ github.event.workflow_run.artifacts_url }}
+        run: |
+           mkdir -p artifacts && cd artifacts
+
+           gh api "$ARTIFACTS_URL" -q '.artifacts[] | [.name, .archive_download_url] | @tsv' | while read artifact
+           do
+             IFS=$'\t' read name url <<< "$artifact"
+             gh api $url > "$name.zip"
+             unzip -d "$name" "$name.zip"
+           done
+
+      - name: "Publish test results"
+        uses: EnricoMi/publish-unit-test-result-action@da5b7be67623cd59bbbd1a0ce4f022050a55605f # v2.26.0
+        with:
+          commit: ${{ github.event.workflow_run.head_sha }}
+          check_name: "Test results"
+          files: artifacts/**/*-results.xml
