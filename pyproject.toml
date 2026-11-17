@@ -35,8 +35,11 @@ justnetstat = "justnetstat.cli:main"
 
 [dependency-groups]
 test = [
-    "pytest>7",
+    "coverage",
+    "pytest>=8",
     "pytest-cov",
+    "pytest-timeout",
+    "tox>=4.22",
 ]
 dev = [
     "ruff",
@@ -68,7 +71,19 @@ known-first-party = ["justnetstat"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+timeout = 300
 
 [tool.coverage.run]
 source = ["src"]
 omit = ["**/justnetstat/version.py"]
+
+[tool.coverage.report]
+# Regexes for lines to exclude from consideration
+exclude_also = [
+    # Don't need coverage for ellipsis used for type annotations
+    "\\.\\.\\.",
+    # Don't complain about lines excluded unless type checking
+    "if TYPE_CHECKING:",
+    # We don't need tests to cover unimplementedness
+    "raise NotImplementedError",
+]
