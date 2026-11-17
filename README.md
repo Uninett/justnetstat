@@ -149,7 +149,6 @@ Modes still to port from the original:
 
 Other open items:
 
-- [ ] Set up CI.
 - [ ] Before deploying, compare fields 0, 2 and 4 of the `-inh` output with the
   original's, for every router the traffic statistics poll. Field 4 now comes
   from `ipAddressTable`. If a router lists a different lowest address there, its
