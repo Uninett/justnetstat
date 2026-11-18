@@ -52,7 +52,7 @@ jobs:
 
       # netsnmp-cffi's wheels bundle the Net-SNMP library, so no system packages are needed
       - name: Install dependencies
-        run: uv pip install --system tox tox-gh-actions tox-uv coverage
+        run: uv pip install --system "tox<=4.67.13" tox-gh-actions tox-uv coverage
 
       # The snmpsim test fixture runs snmpsim under a Python 3.11 interpreter, to dodge a
       # severe performance regression on Python 3.13+.  `uv python find` will not
