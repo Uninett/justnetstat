@@ -11,38 +11,38 @@ from justnetstat import snmp
 
 
 class TestOpenSession:
-    def test_when_agent_answers_snmpv2c_it_should_use_snmpv2c(self, snmp_agent):
-        session = asyncio.run(
-            snmp.open_session(snmp_agent.host, "walk", snmp_agent.port, timeout=1)
+    async def test_when_agent_answers_snmpv2c_it_should_use_snmpv2c(self, snmp_agent):
+        session = await snmp.open_session(
+            snmp_agent.host, "walk", snmp_agent.port, timeout=1
         )
         session.close()
 
         assert session.version == "2c"
 
-    def test_when_agent_does_not_answer_snmpv2c_it_should_fall_back_to_snmpv1(
+    async def test_when_agent_does_not_answer_snmpv2c_it_should_fall_back_to_snmpv1(
         self, monkeypatch
     ):
         monkeypatch.setattr(snmp, "create_session", FakeSnmpV1Agent.create_session)
 
-        session = asyncio.run(snmp.open_session("192.0.2.1"))
+        session = await snmp.open_session("192.0.2.1")
 
         assert session.version == "1"
 
-    def test_when_cancelled_during_the_probe_it_should_close_the_session(
+    async def test_when_cancelled_during_the_probe_it_should_close_the_session(
         self, monkeypatch
     ):
         probe = FakeCancelledProbe()
         monkeypatch.setattr(snmp, "create_session", lambda *args, **kwargs: probe)
 
         with pytest.raises(asyncio.CancelledError):
-            asyncio.run(snmp.open_session("192.0.2.1"))
+            await snmp.open_session("192.0.2.1")
 
         assert probe.closed
 
 
 class TestWalkColumns:
-    def test_it_should_return_rows_in_index_order(self, query_agent):
-        table = query_agent("walk", walking("IF-MIB::ifDescr"))
+    async def test_it_should_return_rows_in_index_order(self, query_agent):
+        table = await query_agent("walk", walking("IF-MIB::ifDescr"))
 
         assert table == {
             OID(".1"): {"IF-MIB::ifDescr": "fxp0"},
@@ -51,10 +51,10 @@ class TestWalkColumns:
         }
 
     @pytest.mark.parametrize("version", ["1", "2c"])
-    def test_when_columns_have_gaps_or_end_early_it_should_only_include_existing_cells(
+    async def test_when_columns_have_gaps_or_end_early_it_should_only_include_existing_cells(  # noqa: E501
         self, query_agent, version
     ):
-        table = query_agent(
+        table = await query_agent(
             "walk",
             walking("IF-MIB::ifDescr", "IF-MIB::ifType", "IF-MIB::ifMtu"),
             version=version,
@@ -70,10 +70,12 @@ class TestWalkColumns:
             OID(".3"): {"IF-MIB::ifDescr": "lo0.0", "IF-MIB::ifMtu": 1500},
         }
 
-    def test_when_table_spans_several_bulk_requests_it_should_fetch_all_rows(
+    async def test_when_table_spans_several_bulk_requests_it_should_fetch_all_rows(
         self, query_agent
     ):
-        table = query_agent("many-rows", walking("IF-MIB::ifDescr", "IF-MIB::ifMtu"))
+        table = await query_agent(
+            "many-rows", walking("IF-MIB::ifDescr", "IF-MIB::ifMtu")
+        )
 
         assert len(table) == 25
         assert table[OID(".25")] == {"IF-MIB::ifDescr": "ge-0/0/25"}
@@ -82,23 +84,23 @@ class TestWalkColumns:
             "IF-MIB::ifMtu": 9192,
         }
 
-    def test_when_snmpv1_agent_has_no_more_data_for_one_column_it_should_keep_walking_the_others(  # noqa: E501
+    async def test_when_snmpv1_agent_has_no_more_data_for_one_column_it_should_keep_walking_the_others(  # noqa: E501
         self, query_agent
     ):
         # ifMtu is the last object in the simulated agent's data, and ends at row 24
-        table = query_agent(
+        table = await query_agent(
             "many-rows", walking("IF-MIB::ifDescr", "IF-MIB::ifMtu"), version="1"
         )
 
         assert len(table) == 25
         assert table[OID(".25")] == {"IF-MIB::ifDescr": "ge-0/0/25"}
 
-    def test_when_agent_has_no_such_column_it_should_return_an_empty_table(
+    async def test_when_agent_has_no_such_column_it_should_return_an_empty_table(
         self, query_agent
     ):
-        assert query_agent("walk", walking("IF-MIB::ifAlias")) == {}
+        assert await query_agent("walk", walking("IF-MIB::ifAlias")) == {}
 
-    def test_when_bulk_answer_ends_in_the_middle_of_a_row_it_should_continue_from_there(
+    async def test_when_bulk_answer_ends_in_the_middle_of_a_row_it_should_continue_from_there(  # noqa: E501
         self,
     ):
         agent = FakeScriptedAgent(
@@ -114,57 +116,53 @@ class TestWalkColumns:
             ],
         )
 
-        table = asyncio.run(
-            snmp.walk_columns(agent, "IF-MIB::ifDescr", "IF-MIB::ifType")
-        )
+        table = await snmp.walk_columns(agent, "IF-MIB::ifDescr", "IF-MIB::ifType")
 
         assert table == {
             OID(".1"): {"IF-MIB::ifDescr": "fxp0", "IF-MIB::ifType": "ethernetCsmacd"},
             OID(".2"): {"IF-MIB::ifDescr": "lo0", "IF-MIB::ifType": "softwareLoopback"},
         }
 
-    def test_when_bulk_answers_are_empty_it_should_halve_the_rows_asked_for_until_they_fit(  # noqa: E501
+    async def test_when_bulk_answers_are_empty_it_should_halve_the_rows_asked_for_until_they_fit(  # noqa: E501
         self,
     ):
         agent = FakeTooBigAgent(max_repetitions_that_fit=5)
 
-        table = asyncio.run(snmp.walk_columns(agent, "IF-MIB::ifDescr"))
+        table = await snmp.walk_columns(agent, "IF-MIB::ifDescr")
 
         assert table == {OID(".1"): {"IF-MIB::ifDescr": "fits"}}
         assert agent.requested_repetitions == [10, 5, 5]
 
-    def test_when_even_a_single_row_gets_an_empty_answer_it_should_raise(self):
+    async def test_when_even_a_single_row_gets_an_empty_answer_it_should_raise(self):
         agent = FakeTooBigAgent(max_repetitions_that_fit=0)
 
         with pytest.raises(SNMPError):
-            asyncio.run(snmp.walk_columns(agent, "IF-MIB::ifDescr"))
+            await snmp.walk_columns(agent, "IF-MIB::ifDescr")
 
         assert agent.requested_repetitions == [10, 5, 2, 1]
 
-    def test_when_snmpv1_answer_is_empty_it_should_raise(self):
+    async def test_when_snmpv1_answer_is_empty_it_should_raise(self):
         agent = FakeScriptedAgent("1", [[]])
 
         with pytest.raises(SNMPError):
-            asyncio.run(
-                asyncio.wait_for(snmp.walk_columns(agent, "IF-MIB::ifDescr"), timeout=1)
+            await asyncio.wait_for(
+                snmp.walk_columns(agent, "IF-MIB::ifDescr"), timeout=1
             )
 
-    def test_when_snmpv1_answer_to_a_single_column_is_empty_it_should_raise(self):
+    async def test_when_snmpv1_answer_to_a_single_column_is_empty_it_should_raise(self):
         echo = [variable("IF-MIB::ifDescr", None), variable("IF-MIB::ifType", None)]
         agent = FakeScriptedAgent(
             "1", [echo, [variable("IF-MIB::ifDescr.1", b"fxp0")], []]
         )
 
         with pytest.raises(SNMPError):
-            asyncio.run(
-                asyncio.wait_for(
-                    snmp.walk_columns(agent, "IF-MIB::ifDescr", "IF-MIB::ifType"),
-                    timeout=1,
-                )
+            await asyncio.wait_for(
+                snmp.walk_columns(agent, "IF-MIB::ifDescr", "IF-MIB::ifType"),
+                timeout=1,
             )
 
-    def test_when_agent_repeats_an_oid_it_should_stop_walking(self):
-        table = asyncio.run(snmp.walk_columns(FakeRepeatingAgent(), "IF-MIB::ifDescr"))
+    async def test_when_agent_repeats_an_oid_it_should_stop_walking(self):
+        table = await snmp.walk_columns(FakeRepeatingAgent(), "IF-MIB::ifDescr")
 
         assert table == {OID(".1"): {"IF-MIB::ifDescr": "repeated"}}
 
