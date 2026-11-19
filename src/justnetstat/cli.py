@@ -13,13 +13,14 @@ from itertools import count
 from netsnmpy.errors import SNMPError
 from netsnmpy.session import SNMPSession
 
-from justnetstat import interface_list, traffic
+from justnetstat import interface_list, routes, traffic
 from justnetstat.interfaces import (
     Counters,
     RetrievalError,
     fetch_counters,
     fetch_interfaces,
 )
+from justnetstat.names import reverse_lookup
 from justnetstat.snmp import init_mibs, open_session
 from justnetstat.version import __version__
 
@@ -30,10 +31,18 @@ def main(args: Sequence[str] | None = None) -> int:
     :param args: Command line arguments, defaulting to those of the current process
     :return: The process exit code
     """
-    options = make_parser().parse_args(args)
+
+    options = make_parser().parse_intermixed_args(args)
     mode = select_mode(options)
     if mode is None:
         return 0
+    if mode == "-r":
+        try:
+            options.route_prefix, options.route_count = route_arguments(options)
+        except ValueError as error:
+            # The Tcl implementation's way: a message, and exit status 1
+            print(error, file=sys.stderr)
+            return 1
     show = _MODES.get(mode)
     if show is None:
         print(f"justnetstat: {mode} is not implemented yet", file=sys.stderr)
@@ -123,6 +132,50 @@ async def show_traffic(options: argparse.Namespace) -> None:
             ):
                 print(line, flush=True)
             previous_time, previous = current_time, current
+
+
+async def show_routes(options: argparse.Namespace) -> None:
+    """Prints the routing table of ``-r``, or the part of it starting with a prefix.
+
+    Gateways are shown by name unless ``-n`` is given.  The whole table is
+    fetched before anything is printed, since any route can widen the columns.
+    """
+    async with _session(options) as session:
+        interfaces = await fetch_interfaces(session, with_addresses=False)
+        found = await routes.fetch_routes(
+            session, options.route_prefix, options.route_count
+        )
+    names = (
+        {}
+        if options.numeric
+        else await reverse_lookup(
+            route.next_hop for route in found if route.next_hop is not None
+        )
+    )
+    for line in routes.render(found, interfaces, names, header=not options.no_header):
+        print(line)
+
+
+def route_arguments(options: argparse.Namespace) -> tuple[tuple[int, ...], int | None]:
+    """Interprets the arguments of -r:
+
+    The first argument is a route prefix, and the second the number of routes
+    to show.  The -c option overrides that number.  Like the Tcl
+    implementation, further arguments are ignored, and a count below 1
+    shows one route.
+
+    :return: The prefix's octets, and the number of routes, ``None`` meaning all
+    :raises ValueError: If the prefix or the count is invalid
+    """
+    prefix = routes.parse_prefix(options.args[0]) if options.args else ()
+    if options.count != -1:
+        return prefix, options.count
+    if len(options.args) >= 2:
+        try:
+            return prefix, max(int(options.args[1]), 1)
+        except ValueError:
+            raise ValueError(f'expected integer but got "{options.args[1]}"') from None
+    return prefix, None
 
 
 def traffic_schedule(interval: int, rounds: int) -> tuple[int, int | None]:
@@ -224,6 +277,7 @@ _clock = time.monotonic
 
 _MODES = {
     "-i": show_interface_list,
+    "-r": show_routes,
     "-B": show_traffic,
 }
 
@@ -259,7 +313,8 @@ def make_parser() -> argparse.ArgumentParser:
         dest="count",
         type=_positive_integer,
         default=-1,
-        help="number of rounds of rates for -B (1: show the counters once)",
+        help="number of rounds of rates for -B (1: show the counters once), "
+        "or of routes for -r",
     )
     parser.add_argument(
         "-w",
@@ -283,7 +338,7 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "args",
         nargs="*",
-        help="optional arguments, e.g. a route prefix for -r" + _NOT_IMPLEMENTED,
+        help="optional arguments: a route prefix and a count for -r",
     )
     return parser
 
@@ -303,7 +358,7 @@ _NOT_IMPLEMENTED = " (not implemented yet)"
 
 _FLAGS = [
     ("-i", "interfaces", "do the interface table"),
-    ("-r", "routes", "print routing table entries" + _NOT_IMPLEMENTED),
+    ("-r", "routes", "print routing table entries"),
     ("-B", "traffic", "print interface traffic counters, or rates with -w or -c"),
     ("-C", "errors", "print interface error counters" + _NOT_IMPLEMENTED),
     (
@@ -319,7 +374,7 @@ _FLAGS = [
     ("-d", "descriptions", "print ifAlias fields"),
     ("-D", "descriptions_and_addresses", "print ifAlias fields and IP addresses"),
     ("-m", "media", "print media addresses"),
-    ("-n", "numeric", "don't translate IP addresses to DNS names" + _NOT_IMPLEMENTED),
+    ("-n", "numeric", "don't translate IP addresses to DNS names"),
     ("-h", "no_header", "don't print headers"),
     ("-k", "kilo", "show speeds and rates in whole thousands"),
 ]

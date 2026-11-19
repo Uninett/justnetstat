@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-from justnetstat import cli
+from justnetstat import cli, names
 from justnetstat.interfaces import Counters, Interface
 from justnetstat.version import __version__
 
@@ -30,8 +30,8 @@ class TestMain:
         assert capsys.readouterr() == ("", "")
 
     def test_when_mode_is_not_implemented_it_should_say_so(self, capsys):
-        assert cli.main(["-r", "192.0.2.1"]) == 1
-        assert "-r is not implemented yet" in capsys.readouterr().err
+        assert cli.main(["-C", "192.0.2.1"]) == 1
+        assert "-C is not implemented yet" in capsys.readouterr().err
 
     @pytest.mark.parametrize(
         "arguments", [["-w", "0"], ["-w-5"], ["-c", "0"], ["-t", "0"], ["-w", "soon"]]
@@ -286,6 +286,73 @@ class TestTraffic:
         assert in_rates == ["8k", "8k", "8k"]
 
 
+class TestRoutes:
+    def test_it_should_list_routes_like_tcl(self, snmp_agent, capsys):
+        assert cli.main(["-rn", *agent_args(snmp_agent, "routes")]) == 0
+
+        assert capsys.readouterr().out.splitlines() == [
+            "Destination (pfx/len) Gateway                Flags Interface       Protocol",  # noqa: E501
+            "0.0.0.0/0             192.0.2.1              UG    ge-0/0/0        bgp",
+            "192.0.2.0/24          0.0.0.0                U     ge-0/0/0        local/static",  # noqa: E501
+            "192.0.2.10/32         0.0.0.0                UH    lo0             local/static",  # noqa: E501
+            "198.51.100.0/24       192.0.2.1              UG    ge-0/0/0        ospf",
+            "203.0.113.0/24        0.0.0.0                U     if(0)           netmgmt",  # noqa: E501
+        ]
+
+    def test_without_n_it_should_show_gateways_by_name(
+        self, snmp_agent, capsys, monkeypatch
+    ):
+        async def resolve(resolver, address):
+            return f"gw-{address}.example.net"
+
+        monkeypatch.setattr(names, "_resolve", resolve)
+
+        assert cli.main(["-rh", *agent_args(snmp_agent, "routes"), "198.51"]) == 0
+
+        assert capsys.readouterr().out.split()[1] == "gw-192.0.2.1.example.net"
+
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            ["192.0.2", "1"],
+            ["-c", "1", "192.0.2"],
+            ["-c", "1", "192", "5"],
+            ["192.0.2", "0"],  # Shows one route
+            ["192.0.2", "1", "extra"],  # Ignores extra arguments
+        ],
+    )
+    def test_it_should_take_a_prefix_and_a_count_like_tcl(
+        self, arguments, snmp_agent, capsys
+    ):
+        assert cli.main(["-rnh", *agent_args(snmp_agent, "routes"), *arguments]) == 0
+
+        assert capsys.readouterr().out.splitlines() == [
+            "192.0.2.0/24          0.0.0.0                U     ge-0/0/0        local/static",  # noqa: E501
+        ]
+
+    def test_when_the_prefix_is_empty_it_should_count_routes_from_the_start(
+        self, snmp_agent, capsys
+    ):
+        assert cli.main(["-rnh", *agent_args(snmp_agent, "routes"), "", "1"]) == 0
+
+        assert capsys.readouterr().out.splitlines() == [
+            "0.0.0.0/0             192.0.2.1              UG    ge-0/0/0        bgp",
+        ]
+
+    @pytest.mark.parametrize(
+        "arguments, message",
+        [
+            (["gw2.example.net"], "gw2.example.net is not an IP-prefix"),
+            (["192.0.2", "many"], 'expected integer but got "many"'),
+        ],
+    )
+    def test_when_arguments_are_invalid_it_should_say_so_like_the_tcl(
+        self, arguments, message, capsys
+    ):
+        assert cli.main(["-r", "gw1.example.net", *arguments]) == 1
+        assert capsys.readouterr() == ("", message + "\n")
+
+
 class TestTrafficSchedule:
     @pytest.mark.parametrize(
         "interval, count, expected",
@@ -357,15 +424,29 @@ class TestParser:
 
 
 class TestHelp:
-    @pytest.mark.parametrize(
-        "option", ["-r", "-C", "-b", "-4", "-p", "-T", "-n", "args"]
-    )
+    @pytest.mark.parametrize("option", ["-C", "-b", "-4", "-p", "-T"])
     def test_it_should_mark_unimplemented_options(self, option):
         assert "(not implemented yet)" in help_text(option)
 
     @pytest.mark.parametrize(
         "option",
-        ["-i", "-B", "-d", "-D", "-m", "-h", "-k", "-y", "-t", "-c", "-w", "-P"],
+        [
+            "-i",
+            "-r",
+            "-B",
+            "-d",
+            "-D",
+            "-m",
+            "-n",
+            "-h",
+            "-k",
+            "-y",
+            "-t",
+            "-c",
+            "-w",
+            "-P",
+            "args",
+        ],
     )
     def test_it_should_not_mark_implemented_options(self, option):
         assert "not implemented" not in help_text(option)
