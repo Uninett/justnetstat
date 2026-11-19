@@ -1,6 +1,7 @@
 """SNMP access to network equipment, built on netsnmp-cffi"""
 
 import os
+from collections.abc import Sequence
 from functools import cache
 from pathlib import Path
 from typing import Any
@@ -77,7 +78,12 @@ def create_session(
     return session
 
 
-async def walk_columns(session: SNMPSession, *columns: str) -> Table:
+async def walk_columns(
+    session: SNMPSession,
+    *columns: str,
+    index_prefix: Sequence[int] = (),
+    max_rows: int | None = None,
+) -> Table:
     """Fetches one or more columns of an SNMP table.
 
     Columns may have missing cells, and may end at different rows.  A row
@@ -85,18 +91,23 @@ async def walk_columns(session: SNMPSession, *columns: str) -> Table:
 
     :param session: An open session
     :param columns: Column names as MIB symbols, e.g. ``"IF-MIB::ifName"``
+    :param index_prefix: Only fetch rows whose index starts with these components,
+        and is longer
+    :param max_rows: Stop after this many rows, without walking the rest of the table
     :return: The table rows in index order.  Each maps column names to values,
-        converted by `convert_value`
+        converted by `convert_value`.  Their keys are the whole row indexes,
+        including ``index_prefix``.
     :raises TimeoutError: If the agent stops answering
     :raises SNMPError: If the agent's answers make no sense, e.g. because they are empty
     """
-    roots = {column: netsnmp.symbol_to_oid(column) for column in columns}
+    column_oids = {column: netsnmp.symbol_to_oid(column) for column in columns}
+    roots = {column: oid + tuple(index_prefix) for column, oid in column_oids.items()}
     positions = dict(
         roots
     )  # The last OID fetched for each column that is still being walked
     fetch_next = _NextFetcher(session)
     table: Table = {}
-    while positions:
+    while positions and not _has_complete_rows(table, max_rows, positions, column_oids):
         walking = list(positions)
         variables = await fetch_next([positions[column] for column in walking])
         finished = set()
@@ -108,12 +119,31 @@ async def walk_columns(session: SNMPSession, *columns: str) -> Table:
                 finished.add(column)
                 continue
             positions[column] = variable.oid
-            table.setdefault(variable.oid.strip_prefix(roots[column]), {})[column] = (
-                convert_value(variable)
-            )
+            index = variable.oid.strip_prefix(column_oids[column])
+            table.setdefault(index, {})[column] = convert_value(variable)
         for column in finished:
             del positions[column]
-    return dict(sorted(table.items()))
+    rows = sorted(table.items())
+    return dict(rows if max_rows is None else rows[:max_rows])
+
+
+def _has_complete_rows(
+    table: Table,
+    max_rows: int | None,
+    positions: dict[str, OID],
+    column_oids: dict[str, OID],
+) -> bool:
+    """Tells whether the first max_rows rows of a table walk can no longer change.
+
+    A row is complete once every column still being walked has moved past it.
+    """
+    if max_rows is None or len(table) < max_rows:
+        return False
+    lowest_position = min(
+        position.strip_prefix(column_oids[column])
+        for column, position in positions.items()
+    )
+    return sum(1 for index in table if index < lowest_position) >= max_rows
 
 
 class _NextFetcher:

@@ -84,6 +84,49 @@ class TestWalkColumns:
             "IF-MIB::ifMtu": 9192,
         }
 
+    async def test_when_given_an_index_prefix_it_should_only_fetch_rows_under_it(
+        self, query_agent
+    ):
+        # Routes to IPv4 destinations starting with 192.0.2.
+        # The whole index is kept, so callers can decode it as usual.
+        table = await query_agent(
+            "routes",
+            lambda session: snmp.walk_columns(
+                session,
+                "IP-FORWARD-MIB::inetCidrRouteIfIndex",
+                index_prefix=(1, 4, 192, 0, 2),
+            ),
+        )
+
+        assert list(table) == [
+            OID(".1.4.192.0.2.0.24.2.0.0.1.4.0.0.0.0"),
+            OID(".1.4.192.0.2.10.32.2.0.0.1.4.0.0.0.0"),
+        ]
+
+    async def test_when_given_a_maximum_it_should_return_that_many_complete_rows(
+        self, query_agent
+    ):
+        table = await query_agent(
+            "many-rows",
+            lambda session: snmp.walk_columns(
+                session, "IF-MIB::ifDescr", "IF-MIB::ifMtu", max_rows=3
+            ),
+        )
+
+        # ifMtu only has even rows, so row 3 is complete once ifMtu.4 is fetched
+        assert table == {
+            OID(".1"): {"IF-MIB::ifDescr": "ge-0/0/1"},
+            OID(".2"): {"IF-MIB::ifDescr": "ge-0/0/2", "IF-MIB::ifMtu": 9192},
+            OID(".3"): {"IF-MIB::ifDescr": "ge-0/0/3"},
+        }
+
+    async def test_when_given_a_maximum_it_should_stop_walking_early(self, query_agent):
+        agent = CountingAgent(query_agent)
+
+        await agent.walk(max_rows=1)
+
+        assert agent.requests == 1
+
     async def test_when_snmpv1_agent_has_no_more_data_for_one_column_it_should_keep_walking_the_others(  # noqa: E501
         self, query_agent
     ):
@@ -280,3 +323,22 @@ class FakeTooBigAgent:
             return [variable("IF-MIB::ifType.1", 6)]
         self.answered = True
         return [variable("IF-MIB::ifDescr.1", b"fits")]
+
+
+class CountingAgent:
+    def __init__(self, query_agent):
+        self.query_agent = query_agent
+        self.requests = 0
+
+    async def walk(self, **kwargs):
+        async def operation(session):
+            original = session.agetbulk
+
+            async def agetbulk(*args, **bulk_kwargs):
+                self.requests += 1
+                return await original(*args, **bulk_kwargs)
+
+            session.agetbulk = agetbulk
+            return await snmp.walk_columns(session, "IF-MIB::ifDescr", **kwargs)
+
+        return await self.query_agent("many-rows", operation)
