@@ -16,6 +16,8 @@ Work in progress. These parts of the original are ported:
 - `-i`: the interface list, with its `-a`, `-d`, `-D`, `-m`, `-h` and `-k`
   variants
 - `-B`: interface traffic counters, or traffic rates with `-w` and `-c`
+- `-r`: the routing table, with an optional route prefix and count, and `-n` to
+  show gateways' addresses instead of their names
 
 The other modes report that they are not implemented yet, and `--help` marks the
 options that have no effect yet. See [TODO](#todo).
@@ -25,6 +27,7 @@ options that have no effect yet. See [TODO](#todo).
 ```sh
 justnetstat -i <router>              # list interfaces
 justnetstat -B -w 5 <router>         # show traffic rates every 5 seconds
+justnetstat -rn <router> 10.1        # list routes to 10.1.x.x, without DNS
 justnetstat --help                   # list all options
 ```
 
@@ -66,8 +69,9 @@ deliberate differences.
 
 ### Data sources
 
-- **MIBs:** values are read using modern MIBs (IF-MIB, IANAifType-MIB, IP-MIB),
-  shipped with the package. MIBs installed on the system are not used.
+- **MIBs:** values are read using modern MIBs (IF-MIB, IANAifType-MIB, IP-MIB,
+  IP-FORWARD-MIB), shipped with the package. MIBs installed on the system are
+  not used.
 - **Interface names** come from `ifName`, which did not exist when the original
   was written. Devices without it get the original's abbreviated `ifDescr`, e.g.
   `GE0/1`.
@@ -86,6 +90,16 @@ deliberate differences.
   (`on`/`off`, `lldn`, `ether`, `propVirt`), mapped from the modern MIB names.
   Values the original had no abbreviation for, such as `notPresent`, are printed
   as their MIB names.
+- **Routes** come from IP-FORWARD-MIB's `inetCidrRouteTable`, which replaced the
+  `ipRouteTable` the original read. It can list several routes to the same
+  destination, with different prefix lengths or next hops, where `ipRouteTable`
+  had one. Only IPv4 routes are listed, like the original's. A whole address as
+  the prefix lists one route, the first in table order. Routers without
+  `inetCidrRouteTable` show an empty table.
+- **Route protocols** are printed with the original's names from RFC1213-MIB,
+  e.g. `is-is` and `local/static`, mapped from the modern MIB names. Protocols
+  RFC1213-MIB has no name for, e.g. EIGRP, are printed as numbers, since the
+  original's MIB had no names for them either.
 
 ### Formatting
 
@@ -124,6 +138,18 @@ deliberate differences.
 - **Options** `-t`, `-c`, `-w` and `-P` must be whole numbers of at least 1. A
   missing router name is a usage error with exit status 2, where the original
   exited silently with status 1.
+- **`-r` prints nothing until the whole table is fetched**, since any route can
+  widen the columns. The original printed each route as it arrived.
+- **`-r` arguments:** a prefix that is not dotted decimal numbers, e.g. `10..1`,
+  is reported as not being an IP prefix, where the original crashed. A count
+  that is not a number is an error with exit status 1, where the original
+  printed one route and then the error, with status 0. 
+- **`-r` with a whole address** that has no route prints only the header, where
+  the original printed `SNMP get failed with error code` and the error.
+- **DNS lookups** of gateways run several at a time, and give up after 2
+  seconds, leaving the address numeric. Like the original's, they ask the DNS
+  servers directly, so the system's other name sources, e.g. `/etc/hosts`, are
+  not used.
 - **Ctrl-C** exits quietly, with status 130.
 - **A closed pipe**, as in `justnetstat -B -w 1 <router> | head`, exits quietly,
   with status 141.
@@ -132,11 +158,6 @@ deliberate differences.
 
 Modes still to port from the original:
 
-- [ ] `-r`: the routing table, with an optional route prefix and count. The
-  original read `ipRouteTable`, which modern routers rarely support;
-  `inetCidrRouteTable` is the modern replacement. Aligned columns mean nothing
-  is printed until the whole table is fetched, which matters for large routing
-  tables.
 - [ ] `-C`: interface error counters, as a snapshot or as rates.
   `traffic.RateTable` shows how to keep columns steady between rounds.
 - [ ] `-a` on its own: TCP connections and UDP listeners. The modern
@@ -144,8 +165,6 @@ Modes still to port from the original:
 - [ ] `-b`: the BGP summary, with `-p` (peers), `-T` (timers) and `-4` (the BGP4
   path table). Modern routers need vendor MIBs for IPv6 and 4-byte AS numbers;
   Zino 2 handles Juniper and Cisco.
-- [ ] `-n`: turning off DNS lookups of addresses, which only matters for `-r`
-  and `-a`.
 
 Other open items:
 
@@ -185,10 +204,13 @@ own Python 3.11 environment, since it does not work on newer Python versions.
 - `interfaces.py` fetches interfaces, their addresses and their traffic
   counters.
 - `interface_list.py` renders the `-i` views, and `traffic.py` the `-B` views.
+- `routes.py` fetches and renders the `-r` routing table, and `names.py` looks
+  up the names of addresses in DNS.
 - `pretty.py` formats values the way the original did. `table.py` renders
   aligned tables.
-- `mibs/` holds the MIB files the views read, copied from Zino 2. Add files
-  there as new views need them.
+- `mibs/` holds the MIB files the views read, copied from Zino 2. Zino 2 does
+  not have IP-FORWARD-MIB; its copy is RFC 4292's, as installed by the
+  `snmp-mibs-downloader` package. Add files there as new views need them.
 - `tests/snmp_fixtures/*.snmprec` hold the data of the simulated agents. The
   SNMP community picks the file, e.g. `interfaces` for `interfaces.snmprec`.
 
